@@ -1,0 +1,527 @@
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import JSZip from "jszip";
+
+type Photo = {
+  id: string;
+  file: File;
+  url: string;
+};
+
+type Settings = {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  warmth: number;
+};
+
+type PlanMark = {
+  id: number;
+  type: "wall" | "window" | "door";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
+const defaultSettings: Settings = {
+  brightness: 110,
+  contrast: 108,
+  saturation: 108,
+  warmth: 0,
+};
+
+const tools = [
+  { id: "wall", label: "Стена", icon: "━" },
+  { id: "window", label: "Окно", icon: "▤" },
+  { id: "door", label: "Дверь", icon: "⌒" },
+] as const;
+
+export default function Home() {
+  const [tab, setTab] = useState<"photos" | "plan">("photos");
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [activePhoto, setActivePhoto] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const [processing, setProcessing] = useState(false);
+  const [processed, setProcessed] = useState(0);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [planUrl, setPlanUrl] = useState<string | null>(null);
+  const [planName, setPlanName] = useState("");
+  const [marks, setMarks] = useState<PlanMark[]>([]);
+  const [tool, setTool] = useState<"wall" | "window" | "door">("wall");
+  const [firstPoint, setFirstPoint] = useState<{ x: number; y: number } | null>(null);
+  const [projectName, setProjectName] = useState("Новая квартира");
+  const [notice, setNotice] = useState("");
+  const planArea = useRef<HTMLDivElement>(null);
+
+  const currentPhoto = photos.find((photo) => photo.id === activePhoto) ?? photos[0];
+
+  useEffect(() => {
+    return () => {
+      photos.forEach((photo) => URL.revokeObjectURL(photo.url));
+    };
+  }, []);
+
+  function addPhotos(files: FileList | null) {
+    if (!files) return;
+    const valid = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    const added = valid.map((file) => ({
+      id: `${Date.now()}-${Math.random()}`,
+      file,
+      url: URL.createObjectURL(file),
+    }));
+    setPhotos((old) => [...old, ...added]);
+    if (added.length) setActivePhoto(added[0].id);
+    setProcessed(0);
+    setNotice("");
+  }
+
+  function removePhoto(id: string) {
+    const photo = photos.find((item) => item.id === id);
+    if (photo) URL.revokeObjectURL(photo.url);
+    const next = photos.filter((item) => item.id !== id);
+    setPhotos(next);
+    if (activePhoto === id) setActivePhoto(next[0]?.id ?? null);
+    setProcessed(0);
+  }
+
+  function updateSetting(key: keyof Settings, value: number) {
+    setSettings((old) => ({ ...old, [key]: value }));
+    setProcessed(0);
+  }
+
+  function filterString(value: Settings) {
+    return `brightness(${value.brightness}%) contrast(${value.contrast}%) saturate(${value.saturation}%)`;
+  }
+
+  async function renderPhoto(photo: Photo): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          reject(new Error("Не удалось обработать изображение"));
+          return;
+        }
+
+        context.filter = filterString(settings);
+        context.drawImage(image, 0, 0);
+        context.filter = "none";
+
+        if (settings.warmth !== 0) {
+          context.globalAlpha = Math.abs(settings.warmth) / 250;
+          context.fillStyle = settings.warmth > 0 ? "#ffb36b" : "#79bfff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.globalAlpha = 1;
+        }
+
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Не удалось сохранить изображение"));
+        }, "image/jpeg", 0.94);
+      };
+      image.onerror = () => reject(new Error("Ошибка загрузки изображения"));
+      image.src = photo.url;
+    });
+  }
+
+  async function downloadPhotos() {
+    if (!photos.length || processing) return;
+    setProcessing(true);
+    setProcessed(0);
+    setNotice("");
+
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("Обработанные фотографии");
+      for (let i = 0; i < photos.length; i++) {
+        const blob = await renderPhoto(photos[i]);
+        const originalName = photos[i].file.name.replace(/\.[^.]+$/, "");
+        folder?.file(`${originalName}-realty.jpg`, blob);
+        setProcessed(i + 1);
+      }
+
+      const archive = await zip.generateAsync({ type: "blob" });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(archive);
+      link.href = url;
+      link.download = `${projectName || "Квартира"}-фото.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice("Архив готов. Фотографии сохранены.");
+    } catch {
+      setNotice("Не удалось обработать фотографии. Попробуйте ещё раз.");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  function uploadPlan(file: File | undefined) {
+    if (!file || !file.type.startsWith("image/")) return;
+    if (planUrl) URL.revokeObjectURL(planUrl);
+    setPlanUrl(URL.createObjectURL(file));
+    setPlanName(file.name);
+    setMarks([]);
+    setFirstPoint(null);
+  }
+
+  function addPlanMark(event: React.MouseEvent<HTMLDivElement>) {
+    if (!planArea.current || !planUrl) return;
+    const rect = planArea.current.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 100;
+    const y = ((event.clientY - rect.top) / rect.height) * 100;
+
+    if (!firstPoint) {
+      setFirstPoint({ x, y });
+      return;
+    }
+
+    setMarks((old) => [
+      ...old,
+      {
+        id: Date.now(),
+        type: tool,
+        x1: firstPoint.x,
+        y1: firstPoint.y,
+        x2: x,
+        y2: y,
+      },
+    ]);
+    setFirstPoint(null);
+  }
+
+  function exportPlan() {
+    if (!planUrl) return;
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(image, 0, 0);
+
+      marks.forEach((mark) => {
+        const x1 = (mark.x1 / 100) * canvas.width;
+        const y1 = (mark.y1 / 100) * canvas.height;
+        const x2 = (mark.x2 / 100) * canvas.width;
+        const y2 = (mark.y2 / 100) * canvas.height;
+
+        ctx.beginPath();
+        ctx.lineWidth = Math.max(3, canvas.width / 250);
+        ctx.strokeStyle = mark.type === "window" ? "#16a6e0" : mark.type === "door" ? "#d28b32" : "#182c42";
+        ctx.lineCap = "round";
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      });
+
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${projectName || "Планировка"}-план.png`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    };
+    image.src = planUrl;
+  }
+
+  function undoMark() {
+    setMarks((old) => old.slice(0, -1));
+    setFirstPoint(null);
+  }
+
+  function clearPlan() {
+    setMarks([]);
+    setFirstPoint(null);
+  }
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-symbol">R</div>
+          <div>
+            <div className="brand-name">REALTY AI</div>
+            <div className="brand-sub">STUDIO</div>
+          </div>
+        </div>
+
+        <div className="side-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+        <button className={`nav-item ${tab === "photos" ? "active" : ""}`} onClick={() => setTab("photos")}>
+          <span className="nav-icon">▧</span>
+          Фотостудия
+        </button>
+        <button className={`nav-item ${tab === "plan" ? "active" : ""}`} onClick={() => setTab("plan")}>
+          <span className="nav-icon">⌗</span>
+          Планировщик
+        </button>
+
+        <div className="sidebar-bottom">
+          <div className="free-label"><span /> Бесплатная версия</div>
+          <div className="sidebar-caption">Инструменты для презентации объектов недвижимости</div>
+        </div>
+      </aside>
+
+      <section className="workspace">
+        <header className="topbar">
+          <div className="breadcrumb">REALTY AI STUDIO <span>/</span> {tab === "photos" ? "ФОТОСТУДИЯ" : "ПЛАНИРОВЩИК"}</div>
+          <div className="topbar-right">
+            <span className="status-dot" /> Локальная обработка
+          </div>
+        </header>
+
+        <div className="page-content">
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">ИНСТРУМЕНТЫ НЕДВИЖИМОСТИ</div>
+              <h1>{tab === "photos" ? "Фотостудия" : "Планировщик"}</h1>
+              <p>{tab === "photos" ? "Подготовьте фотографии квартиры к публикации." : "Создайте аккуратную схему помещения на основе исходной планировки."}</p>
+            </div>
+            <div className="project-field">
+              <label htmlFor="project-name">НАЗВАНИЕ ОБЪЕКТА</label>
+              <input id="project-name" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
+            </div>
+          </div>
+
+          {tab === "photos" ? (
+            <div className="studio-grid">
+              <section className="main-panel">
+                <div className="panel-heading">
+                  <div>
+                    <h2>Фотографии объекта</h2>
+                    <p>Загрузите все кадры одной квартиры</p>
+                  </div>
+                  <span className="count-pill">{photos.length} фото</span>
+                </div>
+
+                <label className="upload-zone">
+                  <input type="file" accept="image/*" multiple onChange={(e) => addPhotos(e.target.files)} />
+                  <div className="upload-icon">↑</div>
+                  <strong>Загрузить фотографии</strong>
+                  <span>Перетащите файлы сюда или нажмите для выбора</span>
+                  <small>JPG, PNG, WEBP · Можно выбрать сразу несколько файлов</small>
+                </label>
+
+                {photos.length > 0 ? (
+                  <>
+                    <div className="gallery-heading">
+                      <span>ГАЛЕРЕЯ ОБЪЕКТА</span>
+                      <button className="text-button" onClick={() => { photos.forEach((p) => URL.revokeObjectURL(p.url)); setPhotos([]); setActivePhoto(null); setProcessed(0); }}>Удалить все</button>
+                    </div>
+                    <div className="photo-gallery">
+                      {photos.map((photo) => (
+                        <div key={photo.id} className={`photo-thumb ${activePhoto === photo.id ? "selected" : ""}`}>
+                          <button className="thumb-image" onClick={() => { setActivePhoto(photo.id); setShowOriginal(false); }}>
+                            <img src={photo.url} alt={photo.file.name} />
+                          </button>
+                          <button className="remove-photo" onClick={() => removePhoto(photo.id)} aria-label="Удалить фото">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-gallery">
+                    <div className="empty-icon">▧</div>
+                    <strong>Здесь появятся фотографии квартиры</strong>
+                    <span>Можно загрузить кухню, комнаты, санузел и общие планы одним пакетом.</span>
+                  </div>
+                )}
+
+                {currentPhoto && (
+                  <div className="preview-section">
+                    <div className="gallery-heading">
+                      <span>ПРЕДПРОСМОТР</span>
+                      <button className="text-button" onClick={() => setShowOriginal(!showOriginal)}>
+                        {showOriginal ? "Показать обработку" : "Показать оригинал"}
+                      </button>
+                    </div>
+                    <div className="large-preview">
+                      <img
+                        src={currentPhoto.url}
+                        alt="Предпросмотр фотографии"
+                        style={{ filter: showOriginal ? "none" : filterString(settings) }}
+                      />
+                      {!showOriginal && settings.warmth !== 0 && (
+                        <div className="warmth-overlay" style={{
+                          background: settings.warmth > 0 ? "rgba(255,179,107,0.12)" : "rgba(121,191,255,0.12)",
+                          opacity: Math.abs(settings.warmth) / 100
+                        }} />
+                      )}
+                      <span className="preview-tag">{showOriginal ? "ОРИГИНАЛ" : "ПРЕДПРОСМОТР"}</span>
+                    </div>
+                    <div className="file-name">{currentPhoto.file.name}</div>
+                  </div>
+                )}
+              </section>
+
+              <aside className="settings-panel">
+                <div className="panel-heading">
+                  <div>
+                    <h2>Коррекция изображения</h2>
+                    <p>Настройки применяются ко всему пакету</p>
+                  </div>
+                </div>
+
+                <div className="preset-box">
+                  <div className="preset-icon">✦</div>
+                  <div>
+                    <strong>Единый стиль объекта</strong>
+                    <span>Одинаковые параметры для всех кадров</span>
+                  </div>
+                </div>
+
+                <div className="slider-group">
+                  <div className="slider-label"><label htmlFor="brightness">Яркость</label><strong>{settings.brightness}%</strong></div>
+                  <input id="brightness" type="range" min="60" max="150" value={settings.brightness} onChange={(e) => updateSetting("brightness", Number(e.target.value))} />
+                </div>
+                <div className="slider-group">
+                  <div className="slider-label"><label htmlFor="contrast">Контраст</label><strong>{settings.contrast}%</strong></div>
+                  <input id="contrast" type="range" min="60" max="150" value={settings.contrast} onChange={(e) => updateSetting("contrast", Number(e.target.value))} />
+                </div>
+                <div className="slider-group">
+                  <div className="slider-label"><label htmlFor="saturation">Насыщенность</label><strong>{settings.saturation}%</strong></div>
+                  <input id="saturation" type="range" min="0" max="160" value={settings.saturation} onChange={(e) => updateSetting("saturation", Number(e.target.value))} />
+                </div>
+                <div className="slider-group">
+                  <div className="slider-label"><label htmlFor="warmth">Температура</label><strong>{settings.warmth > 0 ? `+${settings.warmth}` : settings.warmth}</strong></div>
+                  <input id="warmth" type="range" min="-50" max="50" value={settings.warmth} onChange={(e) => updateSetting("warmth", Number(e.target.value))} />
+                  <div className="range-hints"><span>Холоднее</span><span>Теплее</span></div>
+                </div>
+
+                <button className="secondary-button" onClick={() => { setSettings(defaultSettings); setProcessed(0); }}>Сбросить настройки</button>
+
+                <div className="export-box">
+                  <div className="export-title">ЭКСПОРТ ФОТОГРАФИЙ</div>
+                  <p>Все загруженные кадры будут обработаны с одинаковыми настройками и собраны в ZIP-архив.</p>
+                  {processing && (
+                    <div className="progress-wrap">
+                      <div className="progress-label"><span>Обработка</span><strong>{processed} / {photos.length}</strong></div>
+                      <div className="progress-track"><div style={{ width: `${photos.length ? (processed / photos.length) * 100 : 0}%` }} /></div>
+                    </div>
+                  )}
+                  <button className="primary-button" disabled={!photos.length || processing} onClick={downloadPhotos}>
+                    {processing ? "Обрабатываем..." : "↓  Скачать все фотографии"}
+                  </button>
+                  {notice && <div className="notice">{notice}</div>}
+                  <div className="export-note">Обработка выполняется в браузере. Фотографии не отправляются на сервер.</div>
+                </div>
+              </aside>
+            </div>
+          ) : (
+            <div className="plan-layout">
+              <section className="main-panel plan-main">
+                <div className="panel-heading">
+                  <div>
+                    <h2>Исходная планировка</h2>
+                    <p>Загрузите фото, скан или рисунок от руки</p>
+                  </div>
+                  {planUrl && <span className="count-pill">{marks.length} элементов</span>}
+                </div>
+
+                <label className="plan-upload">
+                  <input type="file" accept="image/*" onChange={(e) => uploadPlan(e.target.files?.[0])} />
+                  <span>↑</span>
+                  <strong>{planUrl ? "Заменить изображение планировки" : "Загрузить планировку"}</strong>
+                  <small>PNG, JPG или WEBP</small>
+                </label>
+
+                {planUrl ? (
+                  <>
+                    <div className="plan-toolbar">
+                      <div className="tool-buttons">
+                        {tools.map((item) => (
+                          <button key={item.id} className={`tool-button ${tool === item.id ? "chosen" : ""}`} onClick={() => { setTool(item.id); setFirstPoint(null); }}>
+                            <span>{item.icon}</span>{item.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="tool-actions">
+                        <button className="text-button" onClick={undoMark}>Отменить</button>
+                        <button className="text-button" onClick={clearPlan}>Очистить</button>
+                      </div>
+                    </div>
+
+                    <div className="drawing-hint">
+                      {firstPoint ? "Теперь нажмите в точке окончания линии." : "Нажмите в двух точках изображения, чтобы добавить элемент."}
+                    </div>
+
+                    <div className="plan-canvas" ref={planArea} onClick={addPlanMark}>
+                      <img src={planUrl} alt="Исходная планировка" />
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                        {marks.map((mark) => (
+                          <g key={mark.id}>
+                            <line
+                              x1={mark.x1} y1={mark.y1} x2={mark.x2} y2={mark.y2}
+                              stroke={mark.type === "window" ? "#16a6e0" : mark.type === "door" ? "#d28b32" : "#182c42"}
+                              strokeWidth={mark.type === "wall" ? 1.5 : 1}
+                              strokeLinecap="round"
+                            />
+                          </g>
+                        ))}
+                        {firstPoint && <circle cx={firstPoint.x} cy={firstPoint.y} r="1.2" fill="#d28b32" />}
+                      </svg>
+                    </div>
+                    <div className="plan-legend">
+                      <span><i className="legend-wall" /> Стены</span>
+                      <span><i className="legend-window" /> Окна</span>
+                      <span><i className="legend-door" /> Двери</span>
+                    </div>
+                    <div className="plan-bottom">
+                      <span>{planName}</span>
+                      <button className="primary-button compact" onClick={exportPlan}>↓ Экспорт PNG</button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="plan-empty">
+                    <div className="plan-empty-icon">⌗</div>
+                    <strong>Рабочее поле планировщика</strong>
+                    <span>После загрузки изображения здесь можно будет обозначить стены, двери и окна.</span>
+                  </div>
+                )}
+              </section>
+
+              <aside className="settings-panel plan-info">
+                <div className="panel-heading">
+                  <div>
+                    <h2>Инструменты</h2>
+                    <p>Ручная разметка плана</p>
+                  </div>
+                </div>
+                <div className="info-card">
+                  <div className="info-card-icon">01</div>
+                  <div><strong>Загрузите изображение</strong><span>Используйте фото или скан существующей планировки.</span></div>
+                </div>
+                <div className="info-card">
+                  <div className="info-card-icon">02</div>
+                  <div><strong>Выберите элемент</strong><span>Стена, окно или дверь. Для каждого элемента укажите начало и конец линии.</span></div>
+                </div>
+                <div className="info-card">
+                  <div className="info-card-icon">03</div>
+                  <div><strong>Сохраните результат</strong><span>Экспортируйте изображение с нанесённой разметкой.</span></div>
+                </div>
+                <div className="warning-note">
+                  <strong>Важно</strong>
+                  <p>Разметка наносится поверх исходного изображения. Приложение не определяет автоматически размеры и не восстанавливает скрытую геометрию.</p>
+                </div>
+                <div className="plan-stats">
+                  <div><span>Добавлено элементов</span><strong>{marks.length}</strong></div>
+                  <div><span>Исходный файл</span><strong className="file-status">{planUrl ? "Загружен" : "Не загружен"}</strong></div>
+                </div>
+              </aside>
+            </div>
+          )}
+          <footer className="page-footer">REALTY AI STUDIO <span>Инструменты для работы с недвижимостью</span></footer>
+        </div>
+      </section>
+    </main>
+  );
+}
