@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const MODEL = "@cf/runwayml/stable-diffusion-v1-5-img2img";
+const MODEL = "@cf/black-forest-labs/flux-2-klein-9b";
 
 export async function GET() {
   const configured = Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN);
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
     if (!accountId || !apiToken) {
       return NextResponse.json(
-        { error: "ИИ не подключён. Для него нужны CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в Secrets Codespaces. Ручная коррекция и экспорт ZIP доступны без них." },
+        { error: "ИИ не подключён. Проверьте CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN." },
         { status: 503 }
       );
     }
@@ -33,33 +33,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Файл больше 8 МБ. Уменьшите размер фотографии и повторите." }, { status: 413 });
     }
 
-    const image_b64 = Buffer.from(await file.arrayBuffer()).toString("base64");
     const prompt = [
-      "Carefully enhance this exact real-estate interior photograph for a property listing.",
-      "Preserve the original room identity, architecture, geometry, wall positions, ceiling height, floor, windows, doors, radiators, sockets, built-in appliances, furniture and permanent features.",
-      "Do not redesign, remodel, add, remove or move any architectural element or furniture.",
-      "Keep the same camera viewpoint, perspective and composition.",
-      "Apply only subtle photographic correction: natural exposure, neutral realistic white balance, restrained contrast, reduced image noise and clear natural detail.",
-      "The output must remain a faithful photograph of the same property, not a newly imagined interior."
+      "Edit the supplied real-estate interior photograph. This is a photo enhancement task, not a redesign.",
+      "Preserve the exact same room, architecture, geometry, wall positions, ceiling, floor, windows, doors, radiators, sockets, built-in appliances, furniture, objects, camera viewpoint and composition.",
+      "Do not add, remove, move, replace or invent anything. Do not change the layout or room dimensions.",
+      "Only make subtle professional real-estate photo corrections: natural exposure, neutral white balance, realistic colors, restrained contrast, reduced noise and clearer details.",
+      "The result must look like the same original photograph of the same property."
     ].join(" ");
+
+    const upstreamForm = new FormData();
+    upstreamForm.append("prompt", prompt);
+    upstreamForm.append("input_image_0", file, file.name || "interior-photo");
+    upstreamForm.append("width", "1024");
+    upstreamForm.append("height", "768");
+    upstreamForm.append("guidance", "3.5");
 
     const upstream = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${MODEL}`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-          Accept: "image/png"
+          Authorization: `Bearer ${apiToken}`
         },
-        body: JSON.stringify({
-          prompt,
-          negative_prompt: "different room, changed layout, moved walls, extra windows, missing windows, changed doors, changed furniture, added furniture, removed furniture, invented objects, distorted geometry, fisheye, oversaturated colors, CGI, illustration, painting, text, watermark",
-          image_b64,
-          strength: 0.12,
-          guidance: 5,
-          num_steps: 20
-        }),
+        body: upstreamForm,
         signal: AbortSignal.timeout(110000)
       }
     );
@@ -68,22 +64,30 @@ export async function POST(request: Request) {
       const details = await upstream.text();
       console.error("Cloudflare Workers AI error:", upstream.status, details);
       return NextResponse.json(
-        { error: `Cloudflare AI вернул HTTP ${upstream.status}. Проверьте API-токен, права Workers AI и дневную квоту.` },
+        { error: `Cloudflare AI вернул HTTP ${upstream.status}: ${details.slice(0, 500)}` },
         { status: upstream.status >= 500 ? 502 : upstream.status }
       );
     }
 
-    const contentType = upstream.headers.get("content-type") || "image/png";
-    if (!contentType.startsWith("image/")) {
-      console.error("Unexpected Cloudflare AI response:", await upstream.text());
-      return NextResponse.json({ error: "ИИ-сервис вернул неожиданный формат ответа." }, { status: 502 });
+    const contentType = upstream.headers.get("content-type") || "";
+    if (contentType.startsWith("image/")) {
+      return new Response(await upstream.arrayBuffer(), {
+        headers: { "Content-Type": contentType, "Cache-Control": "no-store" }
+      });
     }
 
-    return new Response(await upstream.arrayBuffer(), {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "no-store"
-      }
+    const payload = await upstream.json() as { result?: { image?: string }; errors?: Array<{ message?: string }> };
+    const imageBase64 = payload.result?.image;
+    if (!imageBase64) {
+      console.error("Unexpected Cloudflare AI response:", JSON.stringify(payload).slice(0, 1000));
+      return NextResponse.json(
+        { error: payload.errors?.[0]?.message || "FLUX не вернул готовое изображение." },
+        { status: 502 }
+      );
+    }
+
+    return new Response(Buffer.from(imageBase64, "base64"), {
+      headers: { "Content-Type": "image/png", "Cache-Control": "no-store" }
     });
   } catch (error) {
     console.error("Photo processing failed:", error);
