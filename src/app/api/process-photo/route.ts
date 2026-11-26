@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const maxDuration = 120;
-
 const MODEL = "@cf/runwayml/stable-diffusion-v1-5-img2img";
 
 export async function GET() {
