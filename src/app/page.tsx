@@ -51,6 +51,8 @@ export default function Home() {
   const [showOriginal, setShowOriginal] = useState(false);
   const [planUrl, setPlanUrl] = useState<string | null>(null);
   const [planName, setPlanName] = useState("");
+  const [planAiProcessing, setPlanAiProcessing] = useState(false);
+  const [planAiNotice, setPlanAiNotice] = useState("");
   const [marks, setMarks] = useState<PlanMark[]>([]);
   const [tool, setTool] = useState<"wall" | "window" | "door">("wall");
   const [firstPoint, setFirstPoint] = useState<{ x: number; y: number } | null>(null);
@@ -209,6 +211,39 @@ export default function Home() {
     setPlanName(file.name);
     setMarks([]);
     setFirstPoint(null);
+  }
+
+  async function tracePlanWithAI() {
+    if (!planUrl || planAiProcessing) return;
+    setPlanAiProcessing(true);
+    setPlanAiNotice("ИИ анализирует планировку...");
+    try {
+      const source = await fetch(planUrl);
+      const blob = await source.blob();
+      const file = new File([blob], planName || "plan-image.png", { type: blob.type || "image/png" });
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/trace-plan", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Не удалось распознать планировку.");
+      if (!Array.isArray(data.marks) || data.marks.length === 0) {
+        throw new Error("ИИ не смог уверенно распознать линии. Попробуйте загрузить более чёткий скан.");
+      }
+      setMarks(data.marks.map((mark: { type: "wall" | "window" | "door"; x1: number; y1: number; x2: number; y2: number }, index: number) => ({
+        id: Date.now() + index,
+        type: mark.type,
+        x1: mark.x1,
+        y1: mark.y1,
+        x2: mark.x2,
+        y2: mark.y2
+      })));
+      setFirstPoint(null);
+      setPlanAiNotice(`Распознано элементов: ${data.marks.length}. Проверьте линии и при необходимости поправьте их вручную.`);
+    } catch (error) {
+      setPlanAiNotice(error instanceof Error ? error.message : "Ошибка распознавания планировки.");
+    } finally {
+      setPlanAiProcessing(false);
+    }
   }
 
   function addPlanMark(event: React.MouseEvent<HTMLDivElement>) {
