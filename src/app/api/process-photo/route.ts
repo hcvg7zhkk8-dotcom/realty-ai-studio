@@ -5,6 +5,16 @@ export const maxDuration = 120;
 
 const MODEL = "@cf/runwayml/stable-diffusion-v1-5-img2img";
 
+export async function GET() {
+  const configured = Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN);
+  return NextResponse.json({
+    configured,
+    provider: "Cloudflare Workers AI",
+    model: MODEL,
+    message: configured ? "Cloudflare AI credentials are configured." : "Cloudflare AI credentials are missing."
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -12,7 +22,7 @@ export async function POST(request: Request) {
 
     if (!accountId || !apiToken) {
       return NextResponse.json(
-        { error: "ИИ не подключён: добавьте CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в Secrets Codespaces." },
+        { error: "ИИ не подключён. Для него нужны CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в Secrets Codespaces. Ручная коррекция и экспорт ZIP доступны без них." },
         { status: 503 }
       );
     }
@@ -28,11 +38,12 @@ export async function POST(request: Request) {
 
     const image_b64 = Buffer.from(await file.arrayBuffer()).toString("base64");
     const prompt = [
-      "Professionally enhance this exact real-estate interior photograph for a property listing.",
-      "Preserve the original room, exact architecture, geometry, wall positions, ceiling height, floor, windows, doors, radiators, sockets, built-in appliances, furniture and every permanent feature.",
+      "Carefully enhance this exact real-estate interior photograph for a property listing.",
+      "Preserve the original room identity, architecture, geometry, wall positions, ceiling height, floor, windows, doors, radiators, sockets, built-in appliances, furniture and permanent features.",
       "Do not redesign, remodel, add, remove or move any architectural element or furniture.",
-      "Keep the same camera viewpoint and composition. Apply only subtle natural photographic improvements: balanced exposure, realistic white balance, gentle noise reduction, natural detail and professional interior-photo clarity.",
-      "The result must remain a faithful photograph of the same real property, not a newly imagined interior."
+      "Keep the same camera viewpoint, perspective and composition.",
+      "Apply only subtle photographic correction: natural exposure, neutral realistic white balance, restrained contrast, reduced image noise and clear natural detail.",
+      "The output must remain a faithful photograph of the same property, not a newly imagined interior."
     ].join(" ");
 
     const upstream = await fetch(
@@ -46,9 +57,9 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           prompt,
-          negative_prompt: "different room, changed layout, moved walls, extra windows, missing windows, changed doors, changed furniture, added furniture, removed furniture, invented objects, distorted geometry, fisheye, oversaturated, CGI, illustration, painting, text, watermark",
+          negative_prompt: "different room, changed layout, moved walls, extra windows, missing windows, changed doors, changed furniture, added furniture, removed furniture, invented objects, distorted geometry, fisheye, oversaturated colors, CGI, illustration, painting, text, watermark",
           image_b64,
-          strength: 0.18,
+          strength: 0.12,
           guidance: 5,
           num_steps: 20
         }),
@@ -60,7 +71,7 @@ export async function POST(request: Request) {
       const details = await upstream.text();
       console.error("Cloudflare Workers AI error:", upstream.status, details);
       return NextResponse.json(
-        { error: `Cloudflare AI: HTTP ${upstream.status}. Проверьте API-токен, права доступа, лимит и доступность модели.` },
+        { error: `Cloudflare AI вернул HTTP ${upstream.status}. Проверьте API-токен, права Workers AI и дневную квоту.` },
         { status: upstream.status >= 500 ? 502 : upstream.status }
       );
     }
@@ -72,7 +83,10 @@ export async function POST(request: Request) {
     }
 
     return new Response(await upstream.arrayBuffer(), {
-      headers: { "Content-Type": contentType, "Cache-Control": "no-store" }
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "no-store"
+      }
     });
   } catch (error) {
     console.error("Photo processing failed:", error);
