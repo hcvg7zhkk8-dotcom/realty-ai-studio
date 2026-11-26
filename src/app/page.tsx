@@ -567,6 +567,7 @@ export default function Home() {
                     </div>
 
                     <div className="plan-canvas" ref={planArea} onClick={addPlanMark} style={{ background: "#ffffff" }}>
+                      <img src={planUrl} alt="" aria-hidden="true" style={{ opacity: 0 }} />
                       <svg viewBox="0 0 100 100" preserveAspectRatio="none">
                         <rect x="0" y="0" width="100" height="100" fill="#ffffff" />
                         {marks.map((mark) => (
