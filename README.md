@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# REALTY AI STUDIO
 
-## Getting Started
+Веб-инструмент для подготовки фотографий недвижимости и ручной обрисовки планировок.
 
-First, run the development server:
+## Что работает без внешних ключей
+
+- Загрузка нескольких фотографий одного объекта.
+- Настройка яркости, контраста, насыщенности и цветовой температуры.
+- Предпросмотр и экспорт всех фотографий в ZIP.
+- Загрузка плана квартиры.
+- Нанесение линий стен, окон и дверей поверх исходного плана.
+- Отмена последней линии, очистка разметки и экспорт PNG.
+
+Ручная коррекция выполняется в браузере. Фотографии не отправляются на сервер, пока пользователь не запускает облачную ИИ-обработку.
+
+## Подключение облачного ИИ
+
+Для генеративной обработки используется Cloudflare Workers AI, модель `@cf/runwayml/stable-diffusion-v1-5-img2img`.
+
+Нужны два секрета:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+
+Создайте API Token в Cloudflare с разрешением Workers AI: Read и Write для нужного аккаунта. Добавьте оба значения в GitHub Codespaces Secrets для этого репозитория. После добавления секретов перезапустите Codespace, чтобы переменные окружения попали в сервер Next.js.
+
+Для локального запуска можно создать `.env.local` в корне проекта с этими двумя переменными. Не добавляйте этот файл в Git и никому не отправляйте токен.
+
+Cloudflare Workers AI предоставляет бесплатную дневную квоту, но она ограничена и может меняться. Проверяйте актуальные условия в панели Cloudflare. Если ключи не настроены, приложение остаётся рабочим в режиме ручной коррекции и ZIP-экспорта.
+
+**Важно:** img2img — генеративная обработка, а не гарантированное улучшение пиксель-в-пиксель. Модель может изменить мелкие детали помещения. Сверяйте результат с оригиналом и не используйте ИИ-версию как доказательство фактической планировки или комплектации квартиры.
+
+## Запуск
 
 ```bash
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте порт 3000 в Codespaces.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Проверка production-сборки
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+GitHub Actions автоматически запускает production-сборку после каждого push в `main`.
