@@ -242,3 +242,6 @@ input[type="range"] { width: 100%; accent-color: #4a87b6; height: 4px; cursor: p
   .tool-button { flex: 1; padding: 8px 5px; }
   .plan-toolbar { align-items: flex-start; }
 }
+
+.plan-ai-button { margin-top: 15px; }
+.plan-main .notice { margin: 10px 0; }
