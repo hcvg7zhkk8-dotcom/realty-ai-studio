@@ -269,7 +269,7 @@ export default function Home() {
         link.href = url;
         link.download = `${projectName || "Планировка"}-план.png`;
         link.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       }, "image/png");
     };
     image.src = planUrl;
@@ -344,7 +344,7 @@ export default function Home() {
                   <span className="count-pill">{photos.length} фото</span>
                 </div>
 
-                <label className="upload-zone">
+                <label className="upload-zone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); addPhotos(e.dataTransfer.files); }}>
                   <input type="file" accept="image/*" multiple onChange={(e) => addPhotos(e.target.files)} />
                   <div className="upload-icon">↑</div>
                   <strong>Загрузить фотографии</strong>
@@ -459,6 +459,7 @@ export default function Home() {
                     ↓ Скачать ИИ-обработку (ZIP)
                   </button>
                   {notice && <div className="notice" role="status">{notice}</div>}
+                  {aiConfigured === false && <div className="warning-note"><strong>ИИ пока не подключён</strong><p>Чтобы включить облачную обработку, добавьте CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в секреты Codespaces. Пока можно корректировать фотографии вручную и скачивать ZIP.</p></div>}
                   <div className="export-note">Ручная коррекция работает без ключей и без отправки фото на сервер. Облачный ИИ требует бесплатный аккаунт Cloudflare и API-токен. ИИ-результат может менять детали помещения — сравнивайте его с оригиналом.</div>
                 </div>
               </aside>
