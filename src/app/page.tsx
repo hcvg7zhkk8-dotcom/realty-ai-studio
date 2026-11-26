@@ -533,6 +533,12 @@ export default function Home() {
                       </div>
                     </div>
 
+                    <button className="primary-button plan-ai-button" onClick={tracePlanWithAI} disabled={planAiProcessing || aiConfigured !== true}>
+                      {planAiProcessing ? "ИИ распознаёт планировку..." : "✦ Обвести планировку с помощью ИИ"}
+                    </button>
+                    {planAiNotice && <div className="notice" role="status">{planAiNotice}</div>}
+                    {aiConfigured === false && <div className="export-note">Для автоматической обрисовки нужны ключи Cloudflare Workers AI.</div>}
+
                     <div className="drawing-hint">
                       {firstPoint ? "Теперь нажмите в точке окончания линии." : "Нажмите в двух точках изображения, чтобы добавить элемент."}
                     </div>
