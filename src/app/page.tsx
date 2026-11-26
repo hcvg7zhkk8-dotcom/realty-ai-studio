@@ -8,6 +8,8 @@ type Photo = {
   id: string;
   file: File;
   url: string;
+  processedUrl?: string;
+  processedBlob?: Blob;
 };
 
 type Settings = {
@@ -80,7 +82,10 @@ export default function Home() {
 
   function removePhoto(id: string) {
     const photo = photos.find((item) => item.id === id);
-    if (photo) URL.revokeObjectURL(photo.url);
+    if (photo) {
+      URL.revokeObjectURL(photo.url);
+      if (photo.processedUrl) URL.revokeObjectURL(photo.processedUrl);
+    }
     const next = photos.filter((item) => item.id !== id);
     setPhotos(next);
     if (activePhoto === id) setActivePhoto(next[0]?.id ?? null);
@@ -126,36 +131,70 @@ export default function Home() {
         }, "image/jpeg", 0.94);
       };
       image.onerror = () => reject(new Error("Ошибка загрузки изображения"));
-      image.src = photo.url;
+      image.src = photo.processedUrl ?? photo.url;
     });
+  }
+
+  async function processPhotos() {
+    if (!photos.length || processing) return;
+    setProcessing(true);
+    setProcessed(0);
+    setNotice("Отправляем первую фотографию в облачную ИИ-модель...");
+
+    try {
+      for (let i = 0; i < photos.length; i++) {
+        const form = new FormData();
+        form.append("file", photos[i].file);
+        const response = await fetch("/api/process-photo", { method: "POST", body: form });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || `Ошибка ИИ-сервиса: ${response.status}`);
+        }
+        const blob = await response.blob();
+        if (!blob.type.startsWith("image/")) throw new Error("ИИ-сервис вернул не изображение.");
+        const processedUrl = URL.createObjectURL(blob);
+        setPhotos((current) => current.map((photo) => {
+          if (photo.id !== photos[i].id) return photo;
+          if (photo.processedUrl) URL.revokeObjectURL(photo.processedUrl);
+          return { ...photo, processedUrl, processedBlob: blob };
+        }));
+        setProcessed(i + 1);
+        setNotice(`ИИ обработал ${i + 1} из ${photos.length} фотографий.`);
+      }
+      setShowOriginal(false);
+      setNotice("ИИ-обработка завершена. Сравните результат с оригиналом и скачайте архив.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось обработать фотографии.");
+    } finally {
+      setProcessing(false);
+    }
   }
 
   async function downloadPhotos() {
     if (!photos.length || processing) return;
+    if (photos.some((photo) => !photo.processedBlob)) {
+      setNotice("Сначала запустите ИИ-обработку всех фотографий.");
+      return;
+    }
     setProcessing(true);
-    setProcessed(0);
-    setNotice("");
-
     try {
       const zip = new JSZip();
-      const folder = zip.folder("Обработанные фотографии");
-      for (let i = 0; i < photos.length; i++) {
-        const blob = await renderPhoto(photos[i]);
-        const originalName = photos[i].file.name.replace(/\.[^.]+$/, "");
+      const folder = zip.folder("REALTY AI STUDIO");
+      for (const photo of photos) {
+        const blob = await renderPhoto(photo);
+        const originalName = photo.file.name.replace(/\\.[^.]+$/, "");
         folder?.file(`${originalName}-realty.jpg`, blob);
-        setProcessed(i + 1);
       }
-
       const archive = await zip.generateAsync({ type: "blob" });
-      const link = document.createElement("a");
       const url = URL.createObjectURL(archive);
+      const link = document.createElement("a");
       link.href = url;
       link.download = `${projectName || "Квартира"}-фото.zip`;
       link.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       setNotice("Архив готов. Фотографии сохранены.");
     } catch {
-      setNotice("Не удалось обработать фотографии. Попробуйте ещё раз.");
+      setNotice("Не удалось собрать архив.");
     } finally {
       setProcessing(false);
     }
@@ -346,7 +385,7 @@ export default function Home() {
                     </div>
                     <div className="large-preview">
                       <img
-                        src={currentPhoto.url}
+                        src={showOriginal ? currentPhoto.url : (currentPhoto.processedUrl ?? currentPhoto.url)}
                         alt="Предпросмотр фотографии"
                         style={{ filter: showOriginal ? "none" : filterString(settings) }}
                       />
@@ -408,11 +447,14 @@ export default function Home() {
                       <div className="progress-track"><div style={{ width: `${photos.length ? (processed / photos.length) * 100 : 0}%` }} /></div>
                     </div>
                   )}
-                  <button className="primary-button" disabled={!photos.length || processing} onClick={downloadPhotos}>
-                    {processing ? "Обрабатываем..." : "↓  Скачать все фотографии"}
+                  <button className="primary-button" disabled={!photos.length || processing} onClick={processPhotos}>
+                    {processing ? `ИИ обрабатывает ${processed}/${photos.length}...` : "✦ Запустить ИИ-обработку"}
                   </button>
-                  {notice && <div className="notice">{notice}</div>}
-                  <div className="export-note">Обработка выполняется в браузере. Фотографии не отправляются на сервер.</div>
+                  <button className="secondary-button" disabled={!photos.length || processing || photos.some((photo) => !photo.processedBlob)} onClick={downloadPhotos}>
+                    ↓ Скачать обработанные фотографии (ZIP)
+                  </button>
+                  {notice && <div className="notice" role="status">{notice}</div>}
+                  <div className="export-note">Оригиналы не изменяются. Для ИИ-обработки фотографии передаются в Cloudflare Workers AI. Результат может требовать проверки на точность деталей помещения.</div>
                 </div>
               </aside>
             </div>
