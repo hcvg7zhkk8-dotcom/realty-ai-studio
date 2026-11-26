@@ -272,42 +272,65 @@ export default function Home() {
   }
 
   function exportPlan() {
-    if (!planUrl) return;
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.drawImage(image, 0, 0);
+    if (!marks.length) {
+      setPlanAiNotice("Сначала распознайте планировку или нанесите линии вручную.");
+      return;
+    }
 
-      marks.forEach((mark) => {
-        const x1 = (mark.x1 / 100) * canvas.width;
-        const y1 = (mark.y1 / 100) * canvas.height;
-        const x2 = (mark.x2 / 100) * canvas.width;
-        const y2 = (mark.y2 / 100) * canvas.height;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1800;
+    canvas.height = 1400;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#111111";
+    ctx.lineCap = "square";
+    ctx.lineJoin = "miter";
+
+    const margin = 90;
+    const sx = (canvas.width - margin * 2) / 100;
+    const sy = (canvas.height - margin * 2) / 100;
+
+    marks.forEach((mark) => {
+      const x1 = margin + mark.x1 * sx;
+      const y1 = margin + mark.y1 * sy;
+      const x2 = margin + mark.x2 * sx;
+      const y2 = margin + mark.y2 * sy;
+      ctx.beginPath();
+      ctx.lineWidth = mark.type === "wall" ? 13 : mark.type === "window" ? 7 : 5;
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      if (mark.type === "window") {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.hypot(dx, dy) || 1;
+        const ox = (-dy / length) * 9;
+        const oy = (dx / length) * 9;
         ctx.beginPath();
-        ctx.lineWidth = Math.max(3, canvas.width / 250);
-        ctx.strokeStyle = mark.type === "window" ? "#16a6e0" : mark.type === "door" ? "#d28b32" : "#182c42";
-        ctx.lineCap = "round";
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
+        ctx.lineWidth = 3;
+        ctx.moveTo(x1 + ox, y1 + oy);
+        ctx.lineTo(x2 + ox, y2 + oy);
         ctx.stroke();
-      });
+      }
+    });
 
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${projectName || "Планировка"}-план.png`;
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }, "image/png");
-    };
-    image.src = planUrl;
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setPlanAiNotice("Не удалось подготовить JPG.");
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${projectName || "Планировка"}-план.jpg`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setPlanAiNotice("JPG готов для загрузки на Авито. Проверьте точность линий.");
+    }, "image/jpeg", 0.95);
   }
 
   function undoMark() {
@@ -504,8 +527,8 @@ export default function Home() {
               <section className="main-panel plan-main">
                 <div className="panel-heading">
                   <div>
-                    <h2>Исходная планировка</h2>
-                    <p>Загрузите фото, скан или рисунок от руки</p>
+                    <h2>Чёрно-белый план</h2>
+                    <p>Загрузите эскиз, распознайте линии и скачайте JPG для Авито</p>
                   </div>
                   {planUrl && <span className="count-pill">{marks.length} элементов</span>}
                 </div>
@@ -543,20 +566,23 @@ export default function Home() {
                       {firstPoint ? "Теперь нажмите в точке окончания линии." : "Нажмите в двух точках изображения, чтобы добавить элемент."}
                     </div>
 
-                    <div className="plan-canvas" ref={planArea} onClick={addPlanMark}>
-                      <img src={planUrl} alt="Исходная планировка" />
+                    <div className="plan-canvas" ref={planArea} onClick={addPlanMark} style={{ background: "#ffffff" }}>
                       <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                        <rect x="0" y="0" width="100" height="100" fill="#ffffff" />
                         {marks.map((mark) => (
                           <g key={mark.id}>
                             <line
                               x1={mark.x1} y1={mark.y1} x2={mark.x2} y2={mark.y2}
-                              stroke={mark.type === "window" ? "#16a6e0" : mark.type === "door" ? "#d28b32" : "#182c42"}
-                              strokeWidth={mark.type === "wall" ? 1.5 : 1}
-                              strokeLinecap="round"
+                              stroke="#111111"
+                              strokeWidth={mark.type === "wall" ? 1.15 : mark.type === "window" ? 0.75 : 0.55}
+                              strokeLinecap="square"
                             />
+                            {mark.type === "window" && (
+                              <line x1={mark.x1} y1={mark.y1} x2={mark.x2} y2={mark.y2} stroke="#111111" strokeWidth="0.2" />
+                            )}
                           </g>
                         ))}
-                        {firstPoint && <circle cx={firstPoint.x} cy={firstPoint.y} r="1.2" fill="#d28b32" />}
+                        {firstPoint && <circle cx={firstPoint.x} cy={firstPoint.y} r="0.8" fill="#111111" />}
                       </svg>
                     </div>
                     <div className="plan-legend">
@@ -566,7 +592,7 @@ export default function Home() {
                     </div>
                     <div className="plan-bottom">
                       <span>{planName}</span>
-                      <button className="primary-button compact" onClick={exportPlan}>↓ Экспорт PNG</button>
+                      <button className="primary-button compact" onClick={exportPlan}>↓ Скачать JPG для Авито</button>
                     </div>
                   </>
                 ) : (
@@ -599,7 +625,7 @@ export default function Home() {
                 </div>
                 <div className="warning-note">
                   <strong>Важно</strong>
-                  <p>Разметка наносится поверх исходного изображения. Приложение не определяет автоматически размеры и не восстанавливает скрытую геометрию.</p>
+                  <p>ИИ распознаёт только видимые линии исходного эскиза. Сверьте результат с оригиналом: скрытые стены и точные размеры автоматически не восстанавливаются.</p>
                 </div>
                 <div className="plan-stats">
                   <div><span>Добавлено элементов</span><strong>{marks.length}</strong></div>
