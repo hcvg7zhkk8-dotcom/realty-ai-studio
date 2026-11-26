@@ -56,14 +56,16 @@ export default function Home() {
   const [firstPoint, setFirstPoint] = useState<{ x: number; y: number } | null>(null);
   const [projectName, setProjectName] = useState("Новая квартира");
   const [notice, setNotice] = useState("");
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
   const planArea = useRef<HTMLDivElement>(null);
 
   const currentPhoto = photos.find((photo) => photo.id === activePhoto) ?? photos[0];
 
   useEffect(() => {
-    return () => {
-      photos.forEach((photo) => URL.revokeObjectURL(photo.url));
-    };
+    fetch("/api/process-photo")
+      .then((response) => response.json())
+      .then((data: { configured?: boolean }) => setAiConfigured(data.configured === true))
+      .catch(() => setAiConfigured(false));
   }, []);
 
   function addPhotos(files: FileList | null) {
@@ -101,7 +103,7 @@ export default function Home() {
     return `brightness(${value.brightness}%) contrast(${value.contrast}%) saturate(${value.saturation}%)`;
   }
 
-  async function renderPhoto(photo: Photo): Promise<Blob> {
+  async function renderPhoto(photo: Photo, useAIResult = true): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const image = new Image();
       image.onload = () => {
@@ -131,7 +133,7 @@ export default function Home() {
         }, "image/jpeg", 0.94);
       };
       image.onerror = () => reject(new Error("Ошибка загрузки изображения"));
-      image.src = photo.processedUrl ?? photo.url;
+      image.src = useAIResult ? (photo.processedUrl ?? photo.url) : photo.url;
     });
   }
 
@@ -170,31 +172,31 @@ export default function Home() {
     }
   }
 
-  async function downloadPhotos() {
+  async function downloadPhotos(useAIResult: boolean) {
     if (!photos.length || processing) return;
-    if (photos.some((photo) => !photo.processedBlob)) {
+    if (useAIResult && photos.some((photo) => !photo.processedBlob)) {
       setNotice("Сначала запустите ИИ-обработку всех фотографий.");
       return;
     }
     setProcessing(true);
     try {
       const zip = new JSZip();
-      const folder = zip.folder("REALTY AI STUDIO");
+      const folder = zip.folder(useAIResult ? "REALTY AI STUDIO - AI" : "REALTY AI STUDIO - manual");
       for (const photo of photos) {
-        const blob = await renderPhoto(photo);
-        const originalName = photo.file.name.replace(/\\.[^.]+$/, "");
+        const blob = await renderPhoto(photo, useAIResult);
+        const originalName = photo.file.name.replace(/\.[^.]+$/, "");
         folder?.file(`${originalName}-realty.jpg`, blob);
       }
       const archive = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(archive);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${projectName || "Квартира"}-фото.zip`;
+      link.download = `${projectName || "Квартира"}-${useAIResult ? "AI" : "коррекция"}-фото.zip`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setNotice("Архив готов. Фотографии сохранены.");
-    } catch {
-      setNotice("Не удалось собрать архив.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось собрать архив.");
     } finally {
       setProcessing(false);
     }
@@ -314,7 +316,7 @@ export default function Home() {
         <header className="topbar">
           <div className="breadcrumb">REALTY AI STUDIO <span>/</span> {tab === "photos" ? "ФОТОСТУДИЯ" : "ПЛАНИРОВЩИК"}</div>
           <div className="topbar-right">
-            <span className="status-dot" /> Локальная обработка
+            <span className="status-dot" /> {aiConfigured === true ? "Облачный ИИ подключён" : aiConfigured === false ? "Ручная коррекция · ИИ не подключён" : "Проверка ИИ..."}
           </div>
         </header>
 
@@ -354,7 +356,7 @@ export default function Home() {
                   <>
                     <div className="gallery-heading">
                       <span>ГАЛЕРЕЯ ОБЪЕКТА</span>
-                      <button className="text-button" onClick={() => { photos.forEach((p) => URL.revokeObjectURL(p.url)); setPhotos([]); setActivePhoto(null); setProcessed(0); }}>Удалить все</button>
+                      <button className="text-button" onClick={() => { photos.forEach((p) => { URL.revokeObjectURL(p.url); if (p.processedUrl) URL.revokeObjectURL(p.processedUrl); }); setPhotos([]); setActivePhoto(null); setProcessed(0); setNotice(""); }}>Удалить все</button>
                     </div>
                     <div className="photo-gallery">
                       {photos.map((photo) => (
@@ -395,7 +397,7 @@ export default function Home() {
                           opacity: Math.abs(settings.warmth) / 100
                         }} />
                       )}
-                      <span className="preview-tag">{showOriginal ? "ОРИГИНАЛ" : "ПРЕДПРОСМОТР"}</span>
+                      <span className="preview-tag">{showOriginal ? "ОРИГИНАЛ" : currentPhoto.processedBlob ? "ИИ-РЕЗУЛЬТАТ" : "ПРЕДПРОСМОТР"}</span>
                     </div>
                     <div className="file-name">{currentPhoto.file.name}</div>
                   </div>
@@ -447,14 +449,17 @@ export default function Home() {
                       <div className="progress-track"><div style={{ width: `${photos.length ? (processed / photos.length) * 100 : 0}%` }} /></div>
                     </div>
                   )}
-                  <button className="primary-button" disabled={!photos.length || processing} onClick={processPhotos}>
+                  <button className="primary-button" disabled={!photos.length || processing || aiConfigured !== true} onClick={processPhotos}>
                     {processing ? `ИИ обрабатывает ${processed}/${photos.length}...` : "✦ Запустить ИИ-обработку"}
                   </button>
-                  <button className="secondary-button" disabled={!photos.length || processing || photos.some((photo) => !photo.processedBlob)} onClick={downloadPhotos}>
-                    ↓ Скачать обработанные фотографии (ZIP)
+                  <button className="secondary-button" disabled={!photos.length || processing} onClick={() => downloadPhotos(false)}>
+                    ↓ Скачать ручную коррекцию (ZIP)
+                  </button>
+                  <button className="secondary-button" disabled={!photos.length || processing || photos.some((photo) => !photo.processedBlob)} onClick={() => downloadPhotos(true)}>
+                    ↓ Скачать ИИ-обработку (ZIP)
                   </button>
                   {notice && <div className="notice" role="status">{notice}</div>}
-                  <div className="export-note">Оригиналы не изменяются. Для ИИ-обработки фотографии передаются в Cloudflare Workers AI. Результат может требовать проверки на точность деталей помещения.</div>
+                  <div className="export-note">Ручная коррекция работает без ключей и без отправки фото на сервер. Облачный ИИ требует бесплатный аккаунт Cloudflare и API-токен. ИИ-результат может менять детали помещения — сравнивайте его с оригиналом.</div>
                 </div>
               </aside>
             </div>
