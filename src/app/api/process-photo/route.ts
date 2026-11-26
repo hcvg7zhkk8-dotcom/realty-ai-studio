@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import sharp from "sharp";
 
 const MODEL = "@cf/black-forest-labs/flux-2-klein-9b";
 
@@ -33,6 +34,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Файл больше 8 МБ. Уменьшите размер фотографии и повторите." }, { status: 413 });
     }
 
+    const resizedImage = await sharp(Buffer.from(await file.arrayBuffer()))
+      .rotate()
+      .resize(511, 511, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+
     const prompt = [
       "Edit the supplied real-estate interior photograph. This is a photo enhancement task, not a redesign.",
       "Preserve the exact same room, architecture, geometry, wall positions, ceiling, floor, windows, doors, radiators, sockets, built-in appliances, furniture, objects, camera viewpoint and composition.",
@@ -43,7 +50,7 @@ export async function POST(request: Request) {
 
     const upstreamForm = new FormData();
     upstreamForm.append("prompt", prompt);
-    upstreamForm.append("input_image_0", file, file.name || "interior-photo");
+    upstreamForm.append("input_image_0", new Blob([resizedImage], { type: "image/jpeg" }), "interior-photo.jpg");
     upstreamForm.append("width", "1024");
     upstreamForm.append("height", "768");
     upstreamForm.append("guidance", "3.5");
